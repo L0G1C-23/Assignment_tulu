@@ -49,17 +49,17 @@ def train_model(df):
     # Create and train the model pipeline
     vectorizer = TfidfVectorizer(
         ngram_range=(1, 2),  # unigrams and bigrams
-        min_df=2,           # ignore terms that appear in less than 2 documents
         max_features=5000,   # limit vocabulary size
         stop_words='english',
+        sublinear_tf=True,      # better scaling
+        smooth_idf=True,         # smoother weights
         lowercase=True,
         strip_accents='ascii'
     )
     
     classifier = LogisticRegression(
         random_state=42,
-        max_iter=1000,
-        class_weight='balanced'  # handle class imbalance
+        max_iter=1000
     )
     
     # Create pipeline

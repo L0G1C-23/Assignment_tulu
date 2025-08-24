@@ -1,23 +1,16 @@
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 import joblib
-import pandas as pd
 from datetime import datetime
-import uuid
-import os
-from pathlib import Path
 
 # Initialize FastAPI app
-app = FastAPI(
-    title="AI Message Triage System",
-    description="Hospital message classification and ticketing system",
-    version="1.0.0"
-)
+app = FastAPI()
 
 # Global variables for model and data storage
-ml_pipeline = None
-tickets_db = {}  # In-memory storage (use SQLite for production)
+vectorizer = None
+model = None
+tickets_db = {}  # In-memory dictionary (SQLite preferred but this works)
 ticket_counter = 0
 
 # Pydantic models
@@ -29,25 +22,18 @@ class PredictionResponse(BaseModel):
     confidence: float
 
 class IngestRequest(BaseModel):
-    from_: str = None  # Use from_ to avoid Python keyword conflict
+    from_: str = Field(alias="from")
     text: str
-    
-    class Config:
-        # Allow field alias for 'from'
-        fields = {"from_": "from"}
 
 class TicketResponse(BaseModel):
     id: int
-    from_: str = None
+    from_: str = Field(alias="from")
     text: str
     label: str
     confidence: float
     status: str
     created_at: str
     triage_required: bool
-    
-    class Config:
-        fields = {"from_": "from"}
 
 class TicketUpdateRequest(BaseModel):
     status: str
@@ -57,73 +43,72 @@ class TicketUpdateResponse(BaseModel):
     status: str
     resolved_at: Optional[str] = None
 
-class TicketListResponse(BaseModel):
+class TicketListItem(BaseModel):
     id: int
-    from_: str = None
+    from_: str = Field(alias="from")
     label: str
     status: str
-    
-    class Config:
-        fields = {"from_": "from"}
 
 # Load ML model on startup
 @app.on_event("startup")
 async def load_model():
-    global ml_pipeline
+    global vectorizer, model
     try:
-        ml_pipeline = joblib.load('models/model.joblib')
-        # ml_pipeline = joblib.load('models/pipeline.joblib')
+        # Load the trained components from train.py
+        vectorizer = joblib.load('models/vectorizer.joblib')
+        model = joblib.load('models/model.joblib')
         print("ML model loaded successfully!")
     except Exception as e:
-        print(f"Warning: Could not load ML model: {e}")
+        print(f"Could not load model: {e}")
         print("Please run 'python train.py' first to train the model.")
 
-# API Endpoints
-
+# 1) Health Check
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     return {"status": "ok"}
 
+# 2) Predict Category (ML model)
 @app.post("/ml/predict", response_model=PredictionResponse)
 async def predict_category(request: PredictionRequest):
-    """Predict message category using ML model"""
-    if ml_pipeline is None:
+    if vectorizer is None or model is None:
         raise HTTPException(status_code=500, detail="ML model not loaded. Please train the model first.")
     
     try:
-        # Make prediction
-        prediction = ml_pipeline.predict([request.text])[0]
-        confidence_scores = ml_pipeline.predict_proba([request.text])[0]
+        # Transform text using the trained vectorizer
+        text_tfidf = vectorizer.transform([request.text])
+        
+        # Make prediction using the trained classifier
+        prediction = model.predict(text_tfidf)[0]
+        confidence_scores = model.predict_proba(text_tfidf)[0]
         confidence = float(max(confidence_scores))
         
-        return PredictionResponse(
-            label=prediction,
-            confidence=confidence
-        )
+        return PredictionResponse(label=prediction, confidence=confidence)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
 
+# 3) Ingest Message (create ticket)
 @app.post("/messages/ingest", response_model=TicketResponse)
 async def ingest_message(request: IngestRequest):
-    """Ingest a message and create a ticket with ML classification"""
     global ticket_counter
     
-    if ml_pipeline is None:
+    if vectorizer is None or model is None:
         raise HTTPException(status_code=500, detail="ML model not loaded. Please train the model first.")
     
     try:
-        # Generate ticket ID
+        # Generate ticket ID (auto increment)
         ticket_counter += 1
         ticket_id = ticket_counter
         
-        # Predict category and confidence
-        prediction = ml_pipeline.predict([request.text])[0]
-        confidence_scores = ml_pipeline.predict_proba([request.text])[0]
+        # Use ML model to predict label + confidence
+        text_tfidf = vectorizer.transform([request.text])
+        prediction = model.predict(text_tfidf)[0]
+        confidence_scores = model.predict_proba(text_tfidf)[0]
         confidence = float(max(confidence_scores))
         
-        # Create ticket
+        # Create ticket with all required fields
         current_time = datetime.now().isoformat() + "Z"
+        
+        # If confidence < 0.7 → return "triage_required": true
         triage_required = confidence < 0.7
         
         ticket = {
@@ -134,33 +119,23 @@ async def ingest_message(request: IngestRequest):
             "confidence": confidence,
             "status": "open",
             "created_at": current_time,
-            "triage_required": triage_required,
-            "resolved_at": None
+            "triage_required": triage_required
         }
         
-        # Store in database (in-memory for this implementation)
+        # Store ticket in in-memory dictionary
         tickets_db[ticket_id] = ticket
         
-        return TicketResponse(
-            id=ticket["id"],
-            from_=ticket["from"],
-            text=ticket["text"],
-            label=ticket["label"],
-            confidence=ticket["confidence"],
-            status=ticket["status"],
-            created_at=ticket["created_at"],
-            triage_required=ticket["triage_required"]
-        )
+        return TicketResponse(**ticket)
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error ingesting message: {str(e)}")
 
-@app.get("/tickets", response_model=List[TicketListResponse])
+# 4) List Tickets
+@app.get("/tickets", response_model=List[TicketListItem])
 async def list_tickets(
     label: Optional[str] = Query(None, description="Filter by label"),
     status: Optional[str] = Query(None, description="Filter by status")
 ):
-    """List tickets with optional filtering"""
     try:
         filtered_tickets = []
         
@@ -171,38 +146,36 @@ async def list_tickets(
             if status and ticket["status"] != status:
                 continue
                 
-            filtered_tickets.append(
-                TicketListResponse(
-                    id=ticket["id"],
-                    from_=ticket["from"],
-                    label=ticket["label"],
-                    status=ticket["status"]
-                )
-            )
+            filtered_tickets.append(TicketListItem(
+                id=ticket["id"],
+                **{"from": ticket["from"]},
+                label=ticket["label"],
+                status=ticket["status"]
+            ))
         
         return filtered_tickets
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing tickets: {str(e)}")
 
-@app.patch("/tickets/{ticket_id}", response_model=TicketUpdateResponse)
-async def resolve_ticket(ticket_id: int, request: TicketUpdateRequest):
-    """Update ticket status"""
+# 5) Resolve Ticket
+@app.patch("/tickets/{id}", response_model=TicketUpdateResponse)
+async def resolve_ticket(id: int, request: TicketUpdateRequest):
     try:
-        if ticket_id not in tickets_db:
+        if id not in tickets_db:
             raise HTTPException(status_code=404, detail="Ticket not found")
         
         # Update ticket status
-        tickets_db[ticket_id]["status"] = request.status
+        tickets_db[id]["status"] = request.status
         
         # Set resolved_at timestamp if status is resolved
         resolved_at = None
         if request.status == "resolved":
             resolved_at = datetime.now().isoformat() + "Z"
-            tickets_db[ticket_id]["resolved_at"] = resolved_at
+            tickets_db[id]["resolved_at"] = resolved_at
         
         return TicketUpdateResponse(
-            id=ticket_id,
+            id=id,
             status=request.status,
             resolved_at=resolved_at
         )
@@ -211,50 +184,6 @@ async def resolve_ticket(ticket_id: int, request: TicketUpdateRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error updating ticket: {str(e)}")
-
-# Additional endpoints for better functionality
-
-@app.get("/tickets/{ticket_id}")
-async def get_ticket(ticket_id: int):
-    """Get a specific ticket by ID"""
-    if ticket_id not in tickets_db:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-    
-    return tickets_db[ticket_id]
-
-@app.get("/stats")
-async def get_stats():
-    """Get system statistics"""
-    if not tickets_db:
-        return {"total_tickets": 0, "by_status": {}, "by_label": {}}
-    
-    total_tickets = len(tickets_db)
-    
-    status_counts = {}
-    label_counts = {}
-    
-    for ticket in tickets_db.values():
-        status = ticket["status"]
-        label = ticket["label"]
-        
-        status_counts[status] = status_counts.get(status, 0) + 1
-        label_counts[label] = label_counts.get(label, 0) + 1
-    
-    return {
-        "total_tickets": total_tickets,
-        "by_status": status_counts,
-        "by_label": label_counts,
-        "model_loaded": ml_pipeline is not None
-    }
-
-# Error handlers
-@app.exception_handler(404)
-async def not_found_handler(request, exc):
-    return {"detail": "Endpoint not found"}
-
-@app.exception_handler(500)
-async def internal_server_error_handler(request, exc):
-    return {"detail": "Internal server error"}
 
 if __name__ == "__main__":
     import uvicorn
