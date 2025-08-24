@@ -1,0 +1,195 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.pipeline import Pipeline
+import joblib
+from pathlib import Path
+
+def create_directories():
+    """Create necessary directories if they don't exist"""
+    Path("models").mkdir(exist_ok=True)
+    Path("data").mkdir(exist_ok=True)
+
+def load_dataset():
+    """Load and validate the dataset"""
+    try:
+        df = pd.read_csv('data/messages.csv')
+        # print(f"Dataset loaded successfully with {len(df)} rows")
+        # print(f"Label distribution:\n{df['label'].value_counts()}")
+        return df
+    except FileNotFoundError:
+        print("Error: data/messages.csv not found!")
+        return None
+
+def preprocess_data(df):
+    """Basic data preprocessing"""
+    # Remove any duplicates
+    df = df.drop_duplicates()
+    
+    # Check for missing values
+    if df.isnull().sum().sum() > 0:
+        print("Warning: Found missing values, removing them...")
+        df = df.dropna()
+    
+    return df
+
+def train_model(df):
+    """Train the ML model with proper evaluation"""
+    
+    # Split the data
+    X = df['text']
+    y = df['label']
+    
+    # Stratified split to maintain class distribution
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+    
+    # print(f"Training set size: {len(X_train)}")
+    # print(f"Test set size: {len(X_test)}")
+    
+    # Create and train the model pipeline
+    vectorizer = TfidfVectorizer(
+        ngram_range=(1, 2),  # unigrams and bigrams
+        min_df=2,           # ignore terms that appear in less than 2 documents
+        max_features=5000,   # limit vocabulary size
+        stop_words='english',
+        lowercase=True,
+        strip_accents='ascii'
+    )
+    
+    classifier = LogisticRegression(
+        random_state=42,
+        max_iter=1000,
+        class_weight='balanced'  # handle class imbalance
+    )
+    
+    # Create pipeline
+    pipeline = Pipeline([
+        ('tfidf', vectorizer),
+        ('classifier', classifier)
+    ])
+    
+    # Train the model
+    # print("Training the model...")
+    pipeline.fit(X_train, y_train)
+    
+    # Make predictions
+    y_pred = pipeline.predict(X_test)
+    
+    # Calculate metrics
+    # print("\n" + "="*50)
+    # print("MODEL PERFORMANCE METRICS")
+    # print("="*50)
+    
+    # Per-class metrics
+    report = classification_report(y_test, y_pred, output_dict=True)
+    
+    labels = ['appointment', 'billing', 'reports', 'complaint']
+    for label in labels:
+        if label in report:
+            f1 = report[label]['f1-score']
+            print(f"{label.capitalize()} F1: {f1:.3f}")
+    macro_f1 = f1_score(y_test, y_pred, average='macro')
+    print(f"Macro F1: {macro_f1:.3f}")
+    
+    ''' USE FOR CONFUSION MATRIX
+        # Confusion Matrix
+    print(f"\nConfusion Matrix:")
+    cm = confusion_matrix(y_test, y_pred, labels=labels)
+    print("Predicted ->", end="")
+    for label in labels:
+        print(f"{label[:8]:>10}", end="")
+    print()
+    
+    for i, true_label in enumerate(labels):
+        print(f"Actual {true_label[:8]:<8}", end="")
+        for j in range(len(labels)):
+            print(f"{cm[i][j]:>10}", end="")
+        print()    
+    '''
+
+    return pipeline
+
+
+def save_model_artifacts(pipeline):
+    """Save the trained model and vectorizer"""
+    try:
+        # Extract components from pipeline
+        trained_vectorizer = pipeline.named_steps['tfidf']
+        trained_classifier = pipeline.named_steps['classifier']
+        
+        # Save the vectorizer and model separately for easier loading
+        joblib.dump(trained_vectorizer, 'models/vectorizer.joblib')
+        joblib.dump(trained_classifier, 'models/model.joblib')
+        
+        # If needed then, save the complete pipeline
+        # joblib.dump(pipeline, 'models/pipeline.joblib')
+        
+        '''
+        print(f"\nModel artifacts saved successfully:")
+        print(f"- models/vectorizer.joblib")
+        print(f"- models/model.joblib")
+        '''
+        # print(f"- models/pipeline.joblib")
+        
+    except Exception as e:
+        print(f"Error saving model: {e}")
+
+# def test_saved_model():
+#     """Test the saved model with sample predictions"""
+#     try:
+#         # Load the saved pipeline
+#         pipeline = joblib.load('models/pipeline.joblib')
+        
+#         # Test predictions
+#         test_messages = [
+#             "I want to book an appointment tomorrow",
+#             "How much will this cost?",
+#             "I need my blood test results",
+#             "I'm unhappy with the service"
+#         ]
+        
+#         print(f"\n" + "="*50)
+#         print("TESTING SAVED MODEL")
+#         print("="*50)
+        
+#         for message in test_messages:
+#             prediction = pipeline.predict([message])[0]
+#             confidence = max(pipeline.predict_proba([message])[0])
+#             print(f"Message: '{message}'")
+#             print(f"Prediction: {prediction}, Confidence: {confidence:.3f}")
+#             print("-" * 40)
+            
+#     except Exception as e:
+#         print(f"Error testing saved model: {e}")
+
+def main():
+    # print("Starting ML Model Training...")
+    
+    # Create directories
+    create_directories()
+    
+    # Load dataset
+    df = load_dataset()
+    if df is None:
+        return
+    
+    # Check minimum requirements
+    if len(df) < 100:
+        print(f"Warning: Dataset has only {len(df)} rows. Minimum requirement is 100.")
+    
+    # Preprocess data
+    df = preprocess_data(df)
+    
+    # Train model
+    pipeline = train_model(df)
+    
+    # Save model artifacts
+    save_model_artifacts(pipeline)
+
+if __name__ == "__main__":
+    main()
