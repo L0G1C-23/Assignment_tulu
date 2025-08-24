@@ -117,25 +117,19 @@ def save_model_artifacts(pipeline):
         print(f"Error saving model: {e}")
 
 def main():
-    # Create directories
     create_directories()
     
-    # Load dataset
     df = load_dataset()
     if df is None:
         return
     
-    # Check minimum requirements
     if len(df) < 100:
         print(f"Warning: Dataset has only {len(df)} rows. Minimum requirement is 100.")
     
-    # Preprocess data
     df = preprocess_data(df)
     
-    # Train model
     pipeline = train_model(df)
     
-    # Save model artifacts
     save_model_artifacts(pipeline)
 
 if __name__ == "__main__":
