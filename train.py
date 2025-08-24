@@ -17,8 +17,6 @@ def load_dataset():
     """Load and validate the dataset"""
     try:
         df = pd.read_csv('data/messages.csv')
-        # print(f"Dataset loaded successfully with {len(df)} rows")
-        # print(f"Label distribution:\n{df['label'].value_counts()}")
         return df
     except FileNotFoundError:
         print("Error: data/messages.csv not found!")
@@ -48,9 +46,6 @@ def train_model(df):
         X, y, test_size=0.2, random_state=42, stratify=y
     )
     
-    # print(f"Training set size: {len(X_train)}")
-    # print(f"Test set size: {len(X_test)}")
-    
     # Create and train the model pipeline
     vectorizer = TfidfVectorizer(
         ngram_range=(1, 2),  # unigrams and bigrams
@@ -74,18 +69,11 @@ def train_model(df):
     ])
     
     # Train the model
-    # print("Training the model...")
     pipeline.fit(X_train, y_train)
     
     # Make predictions
     y_pred = pipeline.predict(X_test)
-    
-    # Calculate metrics
-    # print("\n" + "="*50)
-    # print("MODEL PERFORMANCE METRICS")
-    # print("="*50)
-    
-    # Per-class metrics
+
     report = classification_report(y_test, y_pred, output_dict=True)
     
     labels = ['appointment', 'billing', 'reports', 'complaint']
@@ -96,8 +84,7 @@ def train_model(df):
     macro_f1 = f1_score(y_test, y_pred, average='macro')
     print(f"Macro F1: {macro_f1:.3f}")
     
-    ''' USE FOR CONFUSION MATRIX
-        # Confusion Matrix
+    ''' ===USE FOR CONFUSION MATRIX===
     print(f"\nConfusion Matrix:")
     cm = confusion_matrix(y_test, y_pred, labels=labels)
     print("Predicted ->", end="")
@@ -126,50 +113,10 @@ def save_model_artifacts(pipeline):
         joblib.dump(trained_vectorizer, 'models/vectorizer.joblib')
         joblib.dump(trained_classifier, 'models/model.joblib')
         
-        # If needed then, save the complete pipeline
-        # joblib.dump(pipeline, 'models/pipeline.joblib')
-        
-        '''
-        print(f"\nModel artifacts saved successfully:")
-        print(f"- models/vectorizer.joblib")
-        print(f"- models/model.joblib")
-        '''
-        # print(f"- models/pipeline.joblib")
-        
     except Exception as e:
         print(f"Error saving model: {e}")
 
-# def test_saved_model():
-#     """Test the saved model with sample predictions"""
-#     try:
-#         # Load the saved pipeline
-#         pipeline = joblib.load('models/pipeline.joblib')
-        
-#         # Test predictions
-#         test_messages = [
-#             "I want to book an appointment tomorrow",
-#             "How much will this cost?",
-#             "I need my blood test results",
-#             "I'm unhappy with the service"
-#         ]
-        
-#         print(f"\n" + "="*50)
-#         print("TESTING SAVED MODEL")
-#         print("="*50)
-        
-#         for message in test_messages:
-#             prediction = pipeline.predict([message])[0]
-#             confidence = max(pipeline.predict_proba([message])[0])
-#             print(f"Message: '{message}'")
-#             print(f"Prediction: {prediction}, Confidence: {confidence:.3f}")
-#             print("-" * 40)
-            
-#     except Exception as e:
-#         print(f"Error testing saved model: {e}")
-
 def main():
-    # print("Starting ML Model Training...")
-    
     # Create directories
     create_directories()
     
