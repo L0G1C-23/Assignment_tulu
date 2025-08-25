@@ -38,6 +38,8 @@ The API will be available at `http://localhost:8000`
 
 ## API Documentation
 
+Use two terminal one to start API and another to wirte these code.Run these code in CMD
+
 ### Health Check
 ```bash
 curl http://localhost:8000/health
